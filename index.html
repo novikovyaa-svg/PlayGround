@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Sunset Circuit</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#77c9ef;font-family:Impact,"Arial Black",sans-serif}canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none;color:white;text-shadow:3px 3px 0 #222}.top{display:flex;justify-content:space-between;padding:18px 22px}.panel{background:rgba(12,28,54,.78);border:3px solid #fff;border-radius:14px;padding:8px 14px;box-shadow:0 5px 0 rgba(0,0,0,.25)}.label{display:block;font:700 12px Arial;color:#ffd84a}.value{font-size:31px;line-height:1}.speed{text-align:right}.speed .value{font-size:38px}
+#count{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:120px;color:#fff;filter:drop-shadow(7px 8px 0 #e62e2e)}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(19,38,64,.72);pointer-events:auto}.card{width:min(420px,calc(100% - 32px));text-align:center;background:#fff;color:#17304c;border:5px solid #17304c;border-radius:24px;padding:24px;box-shadow:10px 10px 0 #ffcf35}.card h1{margin:0 0 8px;font-size:48px}.card p{font:700 18px Arial}.card button{border:0;border-radius:12px;background:#ef3d35;color:white;padding:14px 28px;font:900 20px Arial;cursor:pointer;box-shadow:0 5px 0 #9f211d}#overlay.show{display:flex}
+.controls{position:absolute;inset:auto 0 18px;display:none;justify-content:space-between;padding:0 18px;pointer-events:none}.control-group{display:flex;gap:10px}.control{pointer-events:auto;width:70px;height:70px;border:3px solid rgba(255,255,255,.9);border-radius:50%;background:rgba(15,32,55,.55);color:white;font-size:28px;font-weight:bold;touch-action:none}.control:active,.control.on{background:#ef3d35;transform:scale(.94)}
+@media (max-width:900px),(pointer:coarse){.controls{display:flex}.top{padding:10px}.value{font-size:24px}.speed .value{font-size:29px}.panel{padding:6px 9px}}
+</style>
+</head>
+<body>
+<div id="hud"><div class="top"><div class="panel"><span class="label">TIME TRIAL</span><span class="value" id="timer">60.00</span></div><div class="panel speed"><span class="label">CHECKPOINT</span><span class="value" id="lap">1 / 3</span></div></div><div id="count">3</div><div id="overlay"><div class="card"><h1 id="resultTitle">FINISH!</h1><p id="resultText"></p><button id="restart">RACE AGAIN</button></div></div><div class="controls"><div class="control-group"><button class="control" data-key="left">◀</button><button class="control" data-key="right">▶</button></div><div class="control-group"><button class="control" data-key="brake">▼</button><button class="control" data-key="gas">▲</button></div></div></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+const canvas=document.createElement('canvas');document.body.prepend(canvas);
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x77c9ef);scene.fog=new THREE.Fog(0x77c9ef,90,190);
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);
+scene.add(new THREE.HemisphereLight(0xdff5ff,0x6b7a34,2.1));const sun=new THREE.DirectionalLight(0xfff1c7,3);sun.position.set(-30,50,20);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+// stadium track: oval/teardrop centerline
+function curvePoint(t){const a=t*Math.PI*2;return new THREE.Vector2(39*Math.cos(a),27*Math.sin(a)+8*Math.sin(2*a));}
+const points=[];for(let i=0;i<200;i++)points.push(curvePoint(i/200));
+const road=new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(p.x,0,p.y)),true,'centripetal');
+const roadGeo=new THREE.TubeGeometry(road,300,10,12,false);const pos=roadGeo.attributes.position;for(let i=0;i<pos.count;i++){const y=pos.getY(i);pos.setY(i,Math.max(.08,y));}pos.needsUpdate=true;
+// tube axis makes a 3D ring; instead construct flat ribbon for racing surface
+const ribbonPts=[];const roadWidth=11;
+for(let i=0;i<=300;i++){const t=i/300;const p=road.getPointAt(t);const tan=road.getTangentAt(t);const normal=new THREE.Vector3(-tan.z,0,tan.x).normalize();ribbonPts.push({p:normal.multiplyScalar(-roadWidth).add(p),q:normal.multiplyScalar(roadWidth).add(p)});} 
+const verts=[],uvs=[],inds=[];for(let i=0;i<=300;i++){verts.push(ribbonPts[i].p.x,.12,ribbonPts[i].p.z,ribbonPts[i].q.x,.12,ribbonPts[i].q.z);uvs.push(i/300,0,i/300,1);if(i<300){let j=i*2;inds.push(j,j+2,j+1,j+1,j+2,j+3)}}
+const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));geo.setIndex(inds);geo.computeVertexNormals();const roadMat=new THREE.MeshStandardMaterial({color:0x343a45,roughness:.85});const roadMesh=new THREE.Mesh(geo,roadMat);roadMesh.receiveShadow=true;scene.add(roadMesh);
+// grass and scenery
+const ground=new THREE.Mesh(new THREE.CircleGeometry(110,64),new THREE.MeshStandardMaterial({color:0x65a94d}));ground.rotation.x=-Math.PI/2;ground.position.y=-.03;ground.receiveShadow=true;scene.add(ground);
+const curbMatR=new THREE.MeshStandardMaterial({color:0xd83232});const curbMatW=new THREE.MeshStandardMaterial({color:0xf5f0df});
+function addCurb(){for(let i=0;i<120;i++){const t=i/120;const p=road.getPointAt(t),tan=road.getTangentAt(t),n=new THREE.Vector3(-tan.z,0,tan.x).normalize();for(const s of [-1,1]){const c=new THREE.Mesh(new THREE.BoxGeometry(1.25,.18,2.1),i%2?curbMatR:curbMatW);c.position.copy(p).add(n.clone().multiplyScalar(s*(roadWidth+.55)));c.position.y=.18;c.rotation.y=Math.atan2(tan.x,tan.z);c.receiveShadow=true;scene.add(c)}}}addCurb();
+// trees
+for(let i=0;i<45;i++){const ang=i/45*Math.PI*2,r=56+((i*17)%28);const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.35,.5,3,6),new THREE.MeshStandardMaterial({color:0x704529}));trunk.position.set(Math.cos(ang)*r,1.5,Math.sin(ang)*r*.8);scene.add(trunk);const crown=new THREE.Mesh(new THREE.ConeGeometry(3.2,7,7),new THREE.MeshStandardMaterial({color:i%3?0x397d3a:0x4d963d}));crown.position.set(trunk.position.x,5,trunk.position.z);scene.add(crown)}
+// start arch
+const startP=road.getPointAt(.0),startTan=road.getTangentAt(.0);const archGroup=new THREE.Group();for(const s of [-1,1]){const post=new THREE.Mesh(new THREE.BoxGeometry(.7,7,.7),new THREE.MeshStandardMaterial({color:0xf4ece1}));post.position.set(-startTan.z*s*12,3.5,startTan.x*s*12);archGroup.add(post)}const beam=new THREE.Mesh(new THREE.BoxGeometry(24,.9,.8),new THREE.MeshStandardMaterial({color:0xef3d35}));beam.position.y=7;archGroup.add(beam);scene.add(archGroup);
+// kart
+const kart=new THREE.Group();const body=new THREE.Mesh(new THREE.BoxGeometry(3.1,.65,5),new THREE.MeshStandardMaterial({color:0xe83a32,roughness:.35,metalness:.15}));body.position.y=1.15;body.castShadow=true;kart.add(body);
+const nose=new THREE.Mesh(new THREE.BoxGeometry(2.4,.55,1.5),new THREE.MeshStandardMaterial({color:0xff553c}));nose.position.set(0,1.35,-1.9);kart.add(nose);
+const seat=new THREE.Mesh(new THREE.BoxGeometry(1.7,1.2,1.8),new THREE.MeshStandardMaterial({color:0xf5ce38}));seat.position.set(0,1.65,.55);kart.add(seat);
+const driverHead=new THREE.Mesh(new THREE.SphereGeometry(.72,12,8),new THREE.MeshStandardMaterial({color:0xf2b38b}));driverHead.position.set(0,2.55,.55);kart.add(driverHead);
+const helmet=new THREE.Mesh(new THREE.SphereGeometry(.78,12,8,0,Math.PI*2,0,Math.PI*.55),new THREE.MeshStandardMaterial({color:0x2677cb}));helmet.position.set(0,2.72,.55);kart.add(helmet);
+const wheelMat=new THREE.MeshStandardMaterial({color:0x16181d,roughness:.7});const wheels=[];for(const x of [-1.75,1.75])for(const z of [-1.7,1.7]){const w=new THREE.Mesh(new THREE.CylinderGeometry(.72,.72,.55,10),wheelMat);w.rotation.z=Math.PI/2;w.position.set(x,.72,z);w.castShadow=true;kart.add(w);wheels.push(w)}scene.add(kart);
+// clouds and distant hills
+for(let i=0;i<12;i++){const cloud=new THREE.Group();for(let j=0;j<3;j++){const puff=new THREE.Mesh(new THREE.SphereGeometry(3+j%2,10,6),new THREE.MeshBasicMaterial({color:0xffffff}));puff.position.set(j*3,0,(j%2)*1.1);cloud.add(puff)}cloud.position.set(-70+i*13,35+((i*7)%10),-50-(i%3)*12);scene.add(cloud)}
+let progress=.02,speed=0,steer=0,lapCount=0,lastProgress=.02,startTime=0,elapsed=0,racing=false,ended=false;
+const keys={};addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' ','w','a','s','d'].includes(k))e.preventDefault();});
+addEventListener('keyup',e=>keys[e.key.toLower]=false);
+for(const b of document.querySelectorAll('.control')){const k=b.dataset.key;const set=v=>{keys[k]=v;b.classList.toggle('on',v)};b.addEventListener('pointerdown',e=>{e.preventDefault();set(true);b.setPointerCapture(e.pointerId)});b.addEventListener('pointerup',()=>set(false));b.addEventListener('pointercancel',()=>set(false));}
+function getState(){const p=road.getPointAt(progress);const t=road.getTangentAt(progress);return{p,t}}
+function updateKart(dt){if(racing&&!ended){const gas=keys.w||keys.arrowup||keys.gas;const brake=keys.s||keys.arrowdown||keys.brake;const left=keys.a||keys.arrowleft||keys.left;const right=keys.d||keys.arrowright||keys.right;
+ if(gas)speed+=22*dt;else speed*=Math.pow(.985,dt*60);if(brake)speed-=28*dt;speed=THREE.MathUtils.clamp(speed,-7,29);steer=THREE.MathUtils.lerp(steer,(right?1:0)-(left?1:0),Math.min(1,dt*7));progress=(progress+speed*dt/370)%1;if(progress<0)progress+=1;
+ elapsed=(performance.now()-startTime)/1000;if(elapsed>=60){elapsed=60;endRace(false)}}else speed*=Math.pow(.97,dt*60);
+ const st=getState();kart.position.copy(st.p);kart.position.y=.15;const heading=Math.atan2(st.t.x,st.t.z);kart.rotation.y=heading-steer*.32;for(const w of wheels){w.rotation.x-=speed*dt/0.72}
+ // checkpoint count from track progress crossings
+ let d=progress-lastProgress;if(d>-.5&&d<.5){if(progress>.28&&lapCount===0)lapCount=1;if(progress>.58&&lapCount===1)lapCount=2;if(progress>.88&&lapCount===2)lapCount=3;if(lapCount===3){lapCount=3;endRace(true)}}lastProgress=progress;
+ document.getElementById('lap').textContent=lapCount<3?`${lapCount+1} / 3`:'3 / 3';document.getElementById('timer').textContent=racing||ended?Math.max(0,60-elapsed).toFixed(2):'60.00'; }
+function endRace(win){if(ended)return;ended=true;racing=false;document.getElementById('overlay').classList.add('show');document.getElementById('resultTitle').textContent=win?'LAP COMPLETE!':'TIME!';document.getElementById('resultText').textContent=win?'You cleared the 3-part trial with '+speed.toFixed(0)+' km/h remaining!':'The clock ran out. Try a cleaner racing line!'}
+document.getElementById('restart').onclick=()=>location.reload();
+// countdown
+let countdown=3,countTimer=performance.now();const countEl=document.getElementById('count');function countLoop(now){const n=3-Math.floor((now-countTimer)/800);if(n>0){countEl.textContent=n}else if(n===0){countEl.textContent='GO!'}else{countEl.style.display='none';if(!racing&&!ended){racing=true;startTime=performance.now()} }if(n>-1)requestAnimationFrame(countLoop)}requestAnimationFrame(countLoop);
+function animate(){requestAnimationFrame(animate);const dt=Math.min(.033,(performance.now()-((animate.last||performance.now())))/1000);animate.last=performance.now();updateKart(dt);
+ const st=getState();const behind=st.t.clone().multiplyScalar(-10);const side=new THREE.Vector3(-st.t.z,0,st.t.x).multiplyScalar(-steer*1.5);const desired=st.p.clone().add(behind).add(side).add(new THREE.Vector3(0,5.8,0));camera.position.lerp(desired,Math.min(1,.12));const look=st.p.clone().add(st.t.clone().multiplyScalar(8)).add(new THREE.Vector3(0,1.2,0));camera.lookAt(look);renderer.render(scene,camera)}animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body>
+</html>
